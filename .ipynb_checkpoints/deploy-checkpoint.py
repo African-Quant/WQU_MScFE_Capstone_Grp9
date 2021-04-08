@@ -9,44 +9,42 @@ Original file is located at
 
 import os
 import re
-   
+import tpqoa
+
 import random
 import numpy as np
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
 from sklearn.model_selection import RandomizedSearchCV, GridSearchCV
 import pandas as pd
-from pylab import mpl, plt
-plt.style.use('seaborn')
-mpl.rcParams['font.family'] = 'serif'
-os.environ['PYTHONHASHSEED'] = '0'
 
+from datetime import date, timedelta
 import warnings
 warnings.filterwarnings('ignore')
 
-from fastbook import *
 
-from pandas.api.types import is_string_dtype, is_numeric_dtype, is_categorical_dtype
-from fastai.tabular.all import *
 from sklearn.ensemble import RandomForestClassifier
 from lightgbm import LGBMClassifier
 from xgboost import XGBClassifier
-from pyfolio.timeseries import perf_stats 
-from pyfolio import create_simple_tear_sheet, create_returns_tear_sheet
 
-pairs = ['AUDCAD', 'AUDCHF', 'AUDJPY', 'AUDNZD', 'AUDUSD', 'CAD', 'CADCHF', 
-        'CADJPY', 'CHF', 'CHFJPY', 'EURAUD', 'EURCAD', 'EURCHF', 'EURGBP', 
-        'EURJPY', 'EURNZD', 'EURUSD', 'GBPAUD', 'GBPCAD', 'GBPCHF', 'GBPJPY', 
-        'GBPNZD', 'GBPUSD', 'JPY', 'NZDCAD', 'NZDCHF', 'NZDJPY', 'NZDUSD']
 
-def get_data(pair):
-        ''' Retrieves (from a github repo) and prepares the data.
-        '''
-        url = f'https://raw.githubusercontent.com/African-Quant/WQU_MScFE_Capstone_Grp9/master/Datasets/{pair}%3DX.csv'
-        raw = pd.read_csv(url)
-        raw = pd.DataFrame(raw).drop(['Adj Close', 'Volume'], axis=1)
-        raw.iloc[:,0] = pd.to_datetime(raw.iloc[:,0])
-        raw.set_index('Date', inplace=True)
-        return raw
+pairs = ['EUR_USD', 'USD_JPY', 'GBP_USD', 'USD_CHF', 
+        'AUD_USD', 'USD_CAD', 'NZD_USD', 'EUR_GBP', 'EUR_JPY',
+        'GBP_JPY', 'CHF_JPY', 'GBP_CHF', 'EUR_AUD', 'EUR_CAD', 
+        'AUD_CAD', 'AUD_JPY', 'CAD_JPY', 'NZD_JPY', 'GBP_CAD', 
+        'GBP_NZD', 'GBP_AUD', 'AUD_NZD',  'AUD_CHF', 'EUR_NZD',
+        'NZD_CHF', 'CAD_CHF', 'NZD_CAD',  'EUR_CHF']
+
+def get_data(instr, gran = 'D', td=1000):
+    start = f"{date.today() - timedelta(td) }"      
+    end = f"{date.today() - timedelta(1)}"        
+    granularity = gran          
+    price = 'M'
+    data = api.get_history(instr, start, end, granularity, price)
+    data.drop(['complete'], axis=1, inplace=True)
+    data.reset_index(inplace=True)
+    data.rename(columns = {'time':'Date','o':'Open','c': 'Close', 'h':'High', 'l': 'Low'}, inplace = True)
+    data.set_index('Date', inplace=True)
+    return data
 
 
 # ATR
@@ -58,12 +56,12 @@ def eATR(df1,n=14):
     # True Range
     df['TR'] = 0
     for i in range(len(df)):
-      try:
-        df.iloc[i, 4] = max(df.iat[i,1] - df.iat[i,2],
+        try:
+            df.iloc[i, 4] = max(df.iat[i,1] - df.iat[i,2],
                          abs(df.iat[i,1] - df.iat[i-1,3]),
                          abs(df.iat[i,2] - df.iat[i-1,3]))
-      except ValueError:
-        pass
+        except ValueError:
+            pass
 
     # eATR
     df['eATR'] = df['TR'].ewm(span=n, adjust=False).mean()
@@ -71,66 +69,66 @@ def eATR(df1,n=14):
     return df['eATR']
 
 def ssl(df1):
-  """This function adds the ssl indicator as features to a dataframe
+    """This function adds the ssl indicator as features to a dataframe
     """
-  df = df1.copy()
-  df['smaHigh'] = df['High'].rolling(window=10).mean()
-  df['smaLow'] = df['Low'].rolling(window=10).mean()
-  df['hlv'] = 0
-  df['hlv'] = np.where(df['Close'] > df['smaHigh'],1,np.where(df['Close'] < df['smaLow'],-1,df['hlv'].shift(1)))
-  df['sslDown'] = np.where(df['hlv'] < 0, df['smaHigh'], df['smaLow'])
-  df['sslUp'] = np.where(df['hlv'] < 0, df['smaLow'], df['smaHigh'])
-  df['sslPosition'] = np.where(df['Close'] > df['sslUp'], 1,
+    df = df1.copy()
+    df['smaHigh'] = df['High'].rolling(window=10).mean()
+    df['smaLow'] = df['Low'].rolling(window=10).mean()
+    df['hlv'] = 0
+    df['hlv'] = np.where(df['Close'] > df['smaHigh'],1,np.where(df['Close'] < df['smaLow'],-1,df['hlv'].shift(1)))
+    df['sslDown'] = np.where(df['hlv'] < 0, df['smaHigh'], df['smaLow'])
+    df['sslUp'] = np.where(df['hlv'] < 0, df['smaLow'], df['smaHigh'])
+    df['sslPosition'] = np.where(df['Close'] > df['sslUp'], 1,
                                np.where(df['Close'] < df['sslDown'], -1, 0))
-  return df[['sslDown', 'sslUp', 'sslPosition']]
+    return df[['sslDown', 'sslUp', 'sslPosition']]
 
 # Waddah Attar
 def WAE(df1):
-  """This function creates adds the indicator Waddah Attar features to a dataframe
-    """
-  df = df1.copy()
+      """This function creates adds the indicator Waddah Attar features to a dataframe
+        """
+    df = df1.copy()
 
   # EMA
-  long_ema = df.loc[:,'Close'].ewm(span=40, adjust=False).mean()
-  short_ema = df.loc[:,'Close'].ewm(span=20, adjust=False).mean()
+    long_ema = df.loc[:,'Close'].ewm(span=40, adjust=False).mean()
+    short_ema = df.loc[:,'Close'].ewm(span=20, adjust=False).mean()
 
-  # MACD
-  MACD = short_ema - long_ema
+      # MACD
+    MACD = short_ema - long_ema
   
   # bBands
-  sma20 = df.loc[:,'Close'].rolling(window=20).mean()  # 20 SMA
+    sma20 = df.loc[:,'Close'].rolling(window=20).mean()  # 20 SMA
     
-  stddev = df.loc[:,'Close'].rolling(window=20).std() # 20 STDdev
-  lower_band = sma20 - (2 * stddev)
-  upper_band = sma20 + (2 * stddev)
+    stddev = df.loc[:,'Close'].rolling(window=20).std() # 20 STDdev
+    lower_band = sma20 - (2 * stddev)
+    upper_band = sma20 + (2 * stddev)
 
-  #Waddah Attar
-  t1 = (MACD - MACD.shift(1))* 150
-  #t2 = MACD.shift(2) - MACD.shift(3)
-  df['e1'] = upper_band - lower_band
-  df['e2'] = -1 *df['e1']
-  #e2 = upper_band.shift(1) - lower_band.shift(1)
+    #Waddah Attar
+    t1 = (MACD - MACD.shift(1))* 150
+    #t2 = MACD.shift(2) - MACD.shift(3)
+    df['e1'] = upper_band - lower_band
+    df['e2'] = -1 *df['e1']
+        #e2 = upper_band.shift(1) - lower_band.shift(1)
 
-  df['trendUp'] = np.where(t1 > 0, t1, 0)
-  df['trendDown'] =  np.where(t1 < 0, t1, 0)
+    df['trendUp'] = np.where(t1 > 0, t1, 0)
+    df['trendDown'] =  np.where(t1 < 0, t1, 0)
 
-  df['waePosition'] = np.where(df['trendUp'] > 0, 1,
+    df['waePosition'] = np.where(df['trendUp'] > 0, 1,
                                np.where(df['trendDown'] < 0, -1, 0))
   
   
-  return df[['e1','e2','trendUp', 'trendDown', 'waePosition']]
+    return df[['e1','e2','trendUp', 'trendDown', 'waePosition']]
 
 def lag_feat(data1):
-  """This function adds lag returns as features to a dataframe
+      """This function adds lag returns as features to a dataframe
     """
-  data = data1.copy()
-  lags = 8
-  cols = []
-  for lag in range(1, lags + 1):
-    col = f'lag_{lag}'
-    data[col] = data['ret'].shift(lag)
-    cols.append(col)
-  return data[cols]
+    data = data1.copy()
+    lags = 8
+    cols = []
+    for lag in range(1, lags + 1):
+        col = f'lag_{lag}'
+        data[col] = data['ret'].shift(lag)
+        cols.append(col)
+    return data[cols]
 
 def datepart_feat(df0, colname = 'Date'):
     """This function adds some common pandas date parts like 'year',
@@ -153,15 +151,15 @@ def datepart_feat(df0, colname = 'Date'):
     return df[nu_feats]
 
 def gen_feat(pair):
-  df0 = get_data(pair).iloc[-4200:,]
-  df0['ret'] = df0['Close'].pct_change()
-  df0['dir'] = np.sign(df0['ret'])
-  eATR_ = eATR(df0).shift(1)
-  wae = WAE(df0).shift(1)
-  ssl1 = ssl(df0).shift(1)
-  datepart = datepart_feat(df0)
-  lags = lag_feat(df0)
-  return pd.concat([df0,  eATR_, wae, ssl1, datepart, lags], axis=1).dropna()
+    df0 = get_data(pair)
+    df0['ret'] = df0['Close'].pct_change()
+    df0['dir'] = np.sign(df0['ret'])
+    eATR_ = eATR(df0).shift(1)
+    wae = WAE(df0).shift(1)
+    ssl1 = ssl(df0).shift(1)
+    datepart = datepart_feat(df0)
+    lags = lag_feat(df0)
+    return pd.concat([df0,  eATR_, wae, ssl1, datepart, lags], axis=1).dropna()
 
 # random forest
 def rfc(xs, y, n_estimators=40, max_samples=1000,
@@ -186,12 +184,12 @@ def rfc_results():
     feats = cols[2:]
 
     #splitting into training, validation and test sets
-    df_train = dataset.iloc[:-1000,:]
+    df_train = dataset.iloc[:-100,:]
     train = df_train.copy()
-    df_test = dataset.iloc[-1000:,:]
+    df_test = dataset.iloc[-100:,:]
     test = df_test.copy()
-    train_f = train.iloc[:-1000,:]
-    valid = train.iloc[-1000:,:]
+    train_f = train.iloc[:-100,:]
+    valid = train.iloc[-100:,:]
 
     #training the algorithm
     m = rfc(train_f[feats], train_f['dir'])
