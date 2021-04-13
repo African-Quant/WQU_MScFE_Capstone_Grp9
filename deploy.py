@@ -12,6 +12,9 @@ from datetime import date, timedelta
 import warnings
 warnings.filterwarnings('ignore')
 
+path = '/content/drive/MyDrive/Oanda_Algo/pyalgo.cfg'
+api = tpqoa.tpqoa('/content/drive/MyDrive/Oanda_Algo/pyalgo.cfg')
+
 
 from sklearn.ensemble import RandomForestClassifier
 from lightgbm import LGBMClassifier
